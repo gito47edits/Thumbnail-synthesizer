@@ -124,14 +124,39 @@ export const refinePrompt = async (currentPrompt: string, userInstructions: stri
 };
 
 /**
- * Generates the actual image using the plan's prompt.
+ * Generates the actual image using the plan's prompt and optional reference image.
  */
-export const generateThumbnailImage = async (prompt: string, aspectRatio: AspectRatio): Promise<string> => {
+export const generateThumbnailImage = async (
+  prompt: string, 
+  aspectRatio: AspectRatio,
+  referenceImage?: string
+): Promise<string> => {
   try {
+    const parts: any[] = [];
+
+    // If a reference image is provided, add it to the request parts
+    if (referenceImage) {
+      // Extract mime type and base64 data
+      // format: data:image/png;base64,.....
+      const matches = referenceImage.match(/^data:(image\/[a-z]+);base64,(.+)$/i);
+      if (matches && matches.length === 3) {
+        parts.push({
+          inlineData: {
+            mimeType: matches[1],
+            data: matches[2]
+          }
+        });
+        // Add instruction to use the image
+        parts.push({ text: "Use the attached image as a heavy visual reference for the main subject/character in the following prompt: " });
+      }
+    }
+
+    parts.push({ text: prompt });
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
-        parts: [{ text: prompt }]
+        parts: parts
       },
       config: {
         imageConfig: {

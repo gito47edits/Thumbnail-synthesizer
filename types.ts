@@ -1,3 +1,4 @@
+
 export interface ThumbnailConcept {
   rationale: string;
   image_prompt: string;
@@ -58,4 +59,13 @@ export interface GenerationState {
   };
   voiceUrl: string | null;
   error: string | null;
+}
+
+export interface LibraryItem {
+  id: string;
+  type: 'human' | 'object';
+  imageUrl: string;
+  prompt: string;
+  timestamp: number;
+  aspectRatio: AspectRatio;
 }

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { generateThumbnailPlan, generateThumbnailImage, generateVoiceover, refinePrompt } from './services/geminiService';
-import { ArtStyle, Emotion, GenerationState, AspectRatio, VoiceName, VoiceTone } from './types';
+import { ArtStyle, Emotion, GenerationState, AspectRatio, VoiceName, VoiceTone, LibraryItem } from './types';
 import { PlanDisplay } from './components/PlanDisplay';
-import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code } from 'lucide-react';
+import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code, Database, Trash2, Clock, Copy, Upload, X, Camera } from 'lucide-react';
 
 const App: React.FC = () => {
   // Config State
@@ -12,6 +12,11 @@ const App: React.FC = () => {
   const [selectedAspectRatio, setSelectedAspectRatio] = useState<AspectRatio>('16:9');
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>(VoiceName.Kore);
   const [selectedTone, setSelectedTone] = useState<VoiceTone>(VoiceTone.NORMAL);
+  
+  // Reference Image State
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [applyRefToHumanOnly, setApplyRefToHumanOnly] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Functional State
   const [state, setState] = useState<GenerationState>({
@@ -24,6 +29,53 @@ const App: React.FC = () => {
     voiceUrl: null,
     error: null,
   });
+
+  const [library, setLibrary] = useState<LibraryItem[]>([]);
+
+  // Load Library on Mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('thumbnail_library');
+      if (stored) {
+        setLibrary(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load library", e);
+    }
+  }, []);
+
+  const addToLibrary = (item: LibraryItem) => {
+    try {
+      const updatedLibrary = [item, ...library].slice(0, 10); // Keep max 10 items to save space
+      setLibrary(updatedLibrary);
+      localStorage.setItem('thumbnail_library', JSON.stringify(updatedLibrary));
+    } catch (e) {
+      console.error("Storage limit reached", e);
+      setState(prev => ({...prev, error: "STORAGE_WARNING: Local database full. Oldest items overwritten."}));
+    }
+  };
+
+  const deleteFromLibrary = (id: string) => {
+    const updatedLibrary = library.filter(item => item.id !== id);
+    setLibrary(updatedLibrary);
+    localStorage.setItem('thumbnail_library', JSON.stringify(updatedLibrary));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setReferenceImage(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+    }
+  };
+
+  const clearReferenceImage = () => {
+    setReferenceImage(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handlePlanGeneration = async () => {
     if (!script.trim()) return;
@@ -52,12 +104,29 @@ const App: React.FC = () => {
     if (!state.strategy) return;
     setState(prev => ({ ...prev, isGeneratingHumanImage: true, error: null }));
     try {
-      const imageUrl = await generateThumbnailImage(state.strategy.human_version.image_prompt, selectedAspectRatio);
+      // Pass reference image if available. Always apply for Human version if set.
+      const imageUrl = await generateThumbnailImage(
+          state.strategy.human_version.image_prompt, 
+          selectedAspectRatio, 
+          referenceImage || undefined
+      );
+
       setState(prev => ({ 
         ...prev, 
         isGeneratingHumanImage: false, 
         generatedImages: { ...prev.generatedImages, human: imageUrl } 
       }));
+      
+      // Add to Library
+      addToLibrary({
+        id: Date.now().toString(),
+        type: 'human',
+        imageUrl: imageUrl,
+        prompt: state.strategy.human_version.image_prompt,
+        timestamp: Date.now(),
+        aspectRatio: selectedAspectRatio
+      });
+
     } catch (err) {
       setState(prev => ({ ...prev, isGeneratingHumanImage: false, error: "RENDER ERROR: Human visual failed." }));
     }
@@ -67,12 +136,31 @@ const App: React.FC = () => {
     if (!state.strategy) return;
     setState(prev => ({ ...prev, isGeneratingObjectImage: true, error: null }));
     try {
-      const imageUrl = await generateThumbnailImage(state.strategy.object_version.image_prompt, selectedAspectRatio);
+      // Conditionally pass reference image based on user setting
+      const refImg = (!applyRefToHumanOnly && referenceImage) ? referenceImage : undefined;
+      
+      const imageUrl = await generateThumbnailImage(
+          state.strategy.object_version.image_prompt, 
+          selectedAspectRatio,
+          refImg
+      );
+      
       setState(prev => ({ 
         ...prev, 
         isGeneratingObjectImage: false, 
         generatedImages: { ...prev.generatedImages, object: imageUrl } 
       }));
+
+      // Add to Library
+      addToLibrary({
+        id: Date.now().toString(),
+        type: 'object',
+        imageUrl: imageUrl,
+        prompt: state.strategy.object_version.image_prompt,
+        timestamp: Date.now(),
+        aspectRatio: selectedAspectRatio
+      });
+
     } catch (err) {
       setState(prev => ({ ...prev, isGeneratingObjectImage: false, error: "RENDER ERROR: Object visual failed." }));
     }
@@ -115,8 +203,14 @@ const App: React.FC = () => {
     }
   };
 
+  const formatDate = (timestamp: number) => {
+    return new Date(timestamp).toLocaleString('en-US', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    });
+  };
+
   return (
-    <div className="min-h-screen bg-black text-green-500 font-mono selection:bg-green-500/30 selection:text-green-100 relative">
+    <div className="min-h-screen bg-black text-green-500 font-mono selection:bg-green-500/30 selection:text-green-100 relative pb-12">
       
       {/* Matrix-like overlay effect */}
       <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-[50] bg-[length:100%_2px,3px_100%] opacity-20"></div>
@@ -220,6 +314,51 @@ const App: React.FC = () => {
               <h2 className="text-xs font-bold uppercase tracking-widest">Visual_Params</h2>
             </div>
 
+             {/* REFERENCE IMAGE UPLOAD */}
+             <div>
+                <label className="block text-[10px] font-bold text-green-700 uppercase mb-2">Reference_Protocol (Face/Style)</label>
+                
+                {!referenceImage ? (
+                    <div 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border border-dashed border-green-900 hover:border-green-500 bg-black p-4 text-center cursor-pointer transition-colors group"
+                    >
+                        <Upload size={16} className="mx-auto mb-2 text-green-800 group-hover:text-green-500" />
+                        <span className="text-[10px] text-green-800 group-hover:text-green-400 uppercase font-bold">Upload Reference Data</span>
+                    </div>
+                ) : (
+                    <div className="bg-green-900/10 border border-green-800 p-2 relative">
+                        <img src={referenceImage} alt="Reference" className="w-full h-32 object-cover border border-green-900/50 opacity-80" />
+                        <button 
+                            onClick={clearReferenceImage}
+                            className="absolute top-1 right-1 bg-black text-red-500 p-1 hover:bg-red-900 hover:text-white border border-red-900 transition-colors"
+                        >
+                            <X size={12} />
+                        </button>
+                        <div className="mt-2 flex items-center gap-2">
+                            <input 
+                                type="checkbox" 
+                                id="humanOnly" 
+                                checked={applyRefToHumanOnly} 
+                                onChange={(e) => setApplyRefToHumanOnly(e.target.checked)}
+                                className="accent-green-500 bg-black border-green-900"
+                            />
+                            <label htmlFor="humanOnly" className="text-[10px] uppercase text-green-600 cursor-pointer select-none">
+                                Lock to Human_Target
+                            </label>
+                        </div>
+                    </div>
+                )}
+                <input 
+                    type="file" 
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden" 
+                />
+            </div>
+
+
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-green-700 uppercase">Output_Ratio</label>
               <div className="grid grid-cols-2 gap-2">
@@ -299,76 +438,137 @@ const App: React.FC = () => {
         </div>
 
         {/* RIGHT COLUMN: Results (8 cols) */}
-        <div className="lg:col-span-8 bg-black border border-green-900 p-6 min-h-[600px] relative overflow-hidden">
-            {/* Grid background */}
-            <div className="absolute inset-0 z-0 bg-[linear-gradient(rgba(0,50,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,50,0,0.1)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
-          
-          {!state.strategy && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
-               <div className="w-24 h-24 border border-green-900 rounded-full flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
-                 <div className="w-16 h-16 border border-green-800 rounded-full border-t-green-500 animate-[spin_3s_linear_infinite]"></div>
-               </div>
-               <p className="text-green-800 font-bold tracking-widest text-sm typing-cursor">AWAITING_STRATEGY_PROTOCOL</p>
+        <div className="lg:col-span-8 space-y-8">
+            <div className="bg-black border border-green-900 p-6 min-h-[600px] relative overflow-hidden">
+                {/* Grid background */}
+                <div className="absolute inset-0 z-0 bg-[linear-gradient(rgba(0,50,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,50,0,0.1)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
+            
+            {!state.strategy && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+                <div className="w-24 h-24 border border-green-900 rounded-full flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
+                    <div className="w-16 h-16 border border-green-800 rounded-full border-t-green-500 animate-[spin_3s_linear_infinite]"></div>
+                </div>
+                <p className="text-green-800 font-bold tracking-widest text-sm typing-cursor">AWAITING_STRATEGY_PROTOCOL</p>
+                </div>
+            )}
+
+            {state.strategy && (
+                <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
+                
+                {/* Human Version */}
+                <div className="flex flex-col gap-4">
+                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
+                        {state.generatedImages.human ? (
+                            <>
+                                <img src={state.generatedImages.human} alt="Human Ver" className="w-full h-auto object-contain border border-green-800" />
+                                <a href={state.generatedImages.human} download="human_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
+                                    <Download size={16} />
+                                </a>
+                            </>
+                        ) : (
+                            <div className="text-green-900 flex flex-col items-center">
+                                <ImageIcon size={32} className="mb-2"/>
+                                <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                            </div>
+                        )}
+                    </div>
+                    <PlanDisplay 
+                        title="01 // HUMAN_TARGET" 
+                        concept={state.strategy.human_version}
+                        onGenerateImage={handleHumanImageGeneration}
+                        isGeneratingImage={state.isGeneratingHumanImage}
+                        onRefinePrompt={(instruction) => handleRefinePrompt('human', instruction)}
+                    />
+                </div>
+
+                {/* Object Version */}
+                <div className="flex flex-col gap-4">
+                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
+                        {state.generatedImages.object ? (
+                            <>
+                                <img src={state.generatedImages.object} alt="Object Ver" className="w-full h-auto object-contain border border-green-800" />
+                                <a href={state.generatedImages.object} download="object_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
+                                    <Download size={16} />
+                                </a>
+                            </>
+                        ) : (
+                            <div className="text-green-900 flex flex-col items-center">
+                                <ImageIcon size={32} className="mb-2"/>
+                                <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                            </div>
+                        )}
+                    </div>
+                    <PlanDisplay 
+                        title="02 // OBJECT_TARGET" 
+                        concept={state.strategy.object_version}
+                        onGenerateImage={handleObjectImageGeneration}
+                        isGeneratingImage={state.isGeneratingObjectImage}
+                        onRefinePrompt={(instruction) => handleRefinePrompt('object', instruction)}
+                    />
+                </div>
+
+                </div>
+            )}
             </div>
-          )}
 
-          {state.strategy && (
-            <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
-              
-              {/* Human Version */}
-              <div className="flex flex-col gap-4">
-                 <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
-                    {state.generatedImages.human ? (
-                         <>
-                            <img src={state.generatedImages.human} alt="Human Ver" className="w-full h-auto object-contain border border-green-800" />
-                            <a href={state.generatedImages.human} download="human_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
-                                <Download size={16} />
-                            </a>
-                         </>
-                    ) : (
-                        <div className="text-green-900 flex flex-col items-center">
-                            <ImageIcon size={32} className="mb-2"/>
-                            <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
-                        </div>
-                    )}
-                 </div>
-                 <PlanDisplay 
-                    title="01 // HUMAN_TARGET" 
-                    concept={state.strategy.human_version}
-                    onGenerateImage={handleHumanImageGeneration}
-                    isGeneratingImage={state.isGeneratingHumanImage}
-                    onRefinePrompt={(instruction) => handleRefinePrompt('human', instruction)}
-                 />
-              </div>
-
-              {/* Object Version */}
-              <div className="flex flex-col gap-4">
-                 <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
-                    {state.generatedImages.object ? (
-                        <>
-                            <img src={state.generatedImages.object} alt="Object Ver" className="w-full h-auto object-contain border border-green-800" />
-                            <a href={state.generatedImages.object} download="object_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
-                                <Download size={16} />
-                            </a>
-                        </>
-                    ) : (
-                        <div className="text-green-900 flex flex-col items-center">
-                            <ImageIcon size={32} className="mb-2"/>
-                            <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
-                        </div>
-                    )}
-                 </div>
-                 <PlanDisplay 
-                    title="02 // OBJECT_TARGET" 
-                    concept={state.strategy.object_version}
-                    onGenerateImage={handleObjectImageGeneration}
-                    isGeneratingImage={state.isGeneratingObjectImage}
-                    onRefinePrompt={(instruction) => handleRefinePrompt('object', instruction)}
-                 />
-              </div>
-
+            {/* LIBRARY SECTION */}
+            <div className="border border-green-900 bg-black p-4 relative">
+                <div className="flex items-center justify-between border-b border-green-900/50 pb-2 mb-4">
+                    <div className="flex items-center gap-2 text-green-500">
+                        <Database size={16} />
+                        <h3 className="text-sm font-bold tracking-widest uppercase">ARCHIVE_DATABASE</h3>
+                    </div>
+                    <span className="text-[10px] text-green-800">{library.length} / 10 SLOTS USED</span>
+                </div>
+                
+                {library.length === 0 ? (
+                    <div className="py-8 text-center text-green-900 text-xs tracking-widest border border-dashed border-green-900/30">
+                        // NO_ARCHIVES_FOUND
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                        {library.map((item) => (
+                            <div key={item.id} className="group relative bg-green-900/5 border border-green-900/50 hover:border-green-500 transition-colors">
+                                <div className="aspect-square w-full overflow-hidden bg-black/50 relative">
+                                    <img src={item.imageUrl} alt="Archived" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
+                                    {/* Type badge */}
+                                    <div className="absolute top-1 left-1 bg-black/80 text-[8px] text-green-500 px-1 border border-green-900">
+                                        {item.type === 'human' ? 'HUM' : 'OBJ'}
+                                    </div>
+                                    
+                                    {/* Overlay Actions */}
+                                    <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                                        <a href={item.imageUrl} download={`archive_${item.id}.png`} className="text-green-400 hover:text-white p-1" title="Download">
+                                            <Download size={14} />
+                                        </a>
+                                        <button 
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(item.prompt);
+                                            }}
+                                            className="text-green-400 hover:text-white p-1" 
+                                            title="Copy Prompt"
+                                        >
+                                            <Copy size={14} />
+                                        </button>
+                                        <button 
+                                            onClick={() => deleteFromLibrary(item.id)}
+                                            className="text-red-500 hover:text-red-300 p-1" 
+                                            title="Delete"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="p-2 border-t border-green-900/50">
+                                    <div className="flex items-center gap-1 text-[8px] text-green-700 mb-1">
+                                        <Clock size={8} /> {formatDate(item.timestamp)}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
-          )}
         </div>
       </main>
     </div>
