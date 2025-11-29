@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { generateThumbnailPlan, generateThumbnailImage, generateVoiceover, refinePrompt } from './services/geminiService';
 import { ArtStyle, Emotion, GenerationState, AspectRatio, VoiceName, VoiceTone, LibraryItem } from './types';
 import { PlanDisplay } from './components/PlanDisplay';
-import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code, Database, Trash2, Clock, Copy, Upload, X, Camera } from 'lucide-react';
+import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code, Database, Trash2, Clock, Copy, Upload, X, Camera, Maximize2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // Config State
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   });
 
   const [library, setLibrary] = useState<LibraryItem[]>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Load Library on Mount
   useEffect(() => {
@@ -214,6 +215,25 @@ const App: React.FC = () => {
       
       {/* Matrix-like overlay effect */}
       <div className="fixed inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-[50] bg-[length:100%_2px,3px_100%] opacity-20"></div>
+
+      {/* Pop Out Preview Modal */}
+      {previewImage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
+            <div 
+                className="relative p-1 bg-black border border-green-500 shadow-[0_0_100px_rgba(34,197,94,0.3)] animate-in zoom-in-95 duration-300 transform transition-transform"
+                onMouseLeave={() => setPreviewImage(null)}
+            >
+                <img 
+                    src={previewImage} 
+                    className="max-w-[90vw] max-h-[90vh] object-contain block"
+                    alt="Full Preview"
+                />
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-green-500 text-xs font-bold tracking-widest bg-black/80 px-3 py-1 border border-green-900 rounded pointer-events-none">
+                    EXIT_PERIMETER_TO_CLOSE
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Header */}
       <header className="border-b border-green-900/50 bg-black sticky top-0 z-40 backdrop-blur-sm bg-opacity-90">
@@ -457,11 +477,21 @@ const App: React.FC = () => {
                 
                 {/* Human Version */}
                 <div className="flex flex-col gap-4">
-                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
+                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg group">
                         {state.generatedImages.human ? (
                             <>
-                                <img src={state.generatedImages.human} alt="Human Ver" className="w-full h-auto object-contain border border-green-800" />
-                                <a href={state.generatedImages.human} download="human_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
+                                <img 
+                                    src={state.generatedImages.human} 
+                                    alt="Human Ver" 
+                                    onClick={() => setPreviewImage(state.generatedImages.human)}
+                                    className="w-full h-auto object-contain border border-green-800 cursor-zoom-in hover:opacity-90 transition-opacity hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]" 
+                                />
+                                <a 
+                                    href={state.generatedImages.human} 
+                                    download="human_thumb.png" 
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900 z-20"
+                                >
                                     <Download size={16} />
                                 </a>
                             </>
@@ -483,11 +513,21 @@ const App: React.FC = () => {
 
                 {/* Object Version */}
                 <div className="flex flex-col gap-4">
-                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg">
+                    <div className="flex-1 bg-black border border-green-900/50 p-2 flex flex-col items-center justify-center overflow-hidden min-h-[200px] relative shadow-lg group">
                         {state.generatedImages.object ? (
                             <>
-                                <img src={state.generatedImages.object} alt="Object Ver" className="w-full h-auto object-contain border border-green-800" />
-                                <a href={state.generatedImages.object} download="object_thumb.png" className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900">
+                                <img 
+                                    src={state.generatedImages.object} 
+                                    alt="Object Ver" 
+                                    onClick={() => setPreviewImage(state.generatedImages.object)}
+                                    className="w-full h-auto object-contain border border-green-800 cursor-zoom-in hover:opacity-90 transition-opacity hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]" 
+                                />
+                                <a 
+                                    href={state.generatedImages.object} 
+                                    download="object_thumb.png" 
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900 z-20"
+                                >
                                     <Download size={16} />
                                 </a>
                             </>
@@ -528,35 +568,55 @@ const App: React.FC = () => {
                 ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                         {library.map((item) => (
-                            <div key={item.id} className="group relative bg-green-900/5 border border-green-900/50 hover:border-green-500 transition-colors">
-                                <div className="aspect-square w-full overflow-hidden bg-black/50 relative">
+                            <div 
+                                key={item.id} 
+                                className="group relative bg-green-900/5 border border-green-900/50 hover:border-green-500 transition-colors"
+                            >
+                                <div 
+                                    className="aspect-square w-full overflow-hidden bg-black/50 relative cursor-zoom-in"
+                                    onClick={() => setPreviewImage(item.imageUrl)}
+                                >
                                     <img src={item.imageUrl} alt="Archived" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
                                     {/* Type badge */}
-                                    <div className="absolute top-1 left-1 bg-black/80 text-[8px] text-green-500 px-1 border border-green-900">
+                                    <div className="absolute top-1 left-1 bg-black/80 text-[8px] text-green-500 px-1 border border-green-900 pointer-events-none">
                                         {item.type === 'human' ? 'HUM' : 'OBJ'}
                                     </div>
                                     
                                     {/* Overlay Actions */}
-                                    <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
-                                        <a href={item.imageUrl} download={`archive_${item.id}.png`} className="text-green-400 hover:text-white p-1" title="Download">
+                                    <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 pointer-events-none">
+                                        {/* To allow clicks on buttons but pass clicks on background to parent for preview, we need pointer-events-auto on buttons */}
+                                        <a 
+                                            href={item.imageUrl} 
+                                            download={`archive_${item.id}.png`} 
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-green-400 hover:text-white p-1 pointer-events-auto" 
+                                            title="Download"
+                                        >
                                             <Download size={14} />
                                         </a>
                                         <button 
-                                            onClick={() => {
+                                            onClick={(e) => {
+                                                e.stopPropagation();
                                                 navigator.clipboard.writeText(item.prompt);
                                             }}
-                                            className="text-green-400 hover:text-white p-1" 
+                                            className="text-green-400 hover:text-white p-1 pointer-events-auto" 
                                             title="Copy Prompt"
                                         >
                                             <Copy size={14} />
                                         </button>
                                         <button 
-                                            onClick={() => deleteFromLibrary(item.id)}
-                                            className="text-red-500 hover:text-red-300 p-1" 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                deleteFromLibrary(item.id);
+                                            }}
+                                            className="text-red-500 hover:text-red-300 p-1 pointer-events-auto" 
                                             title="Delete"
                                         >
                                             <Trash2 size={14} />
                                         </button>
+                                         <div className="mt-1 text-[8px] text-green-600 font-bold uppercase tracking-widest pointer-events-none">
+                                            Click to Expand
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="p-2 border-t border-green-900/50">
