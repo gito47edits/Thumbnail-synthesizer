@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, Schema, Modality } from "@google/genai";
 import { ArtStyle, Emotion, ThumbnailStrategy, AspectRatio, VoiceName, VoiceTone } from "../types";
 
 // Initialize Gemini Client
+// Note: For Pro models requiring specific keys, we re-instantiate inside the function
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const CONCEPT_SCHEMA = {
@@ -177,6 +178,67 @@ export const generateThumbnailImage = async (
   } catch (error) {
     console.error("Image Generation Error:", error);
     throw new Error("Failed to generate image.");
+  }
+};
+
+/**
+ * Upscales/Remasters an existing image to 2K resolution using Gemini Pro Vision.
+ */
+export const upscaleImage = async (
+  imageBase64: string,
+  originalPrompt: string,
+  aspectRatio: AspectRatio
+): Promise<string> => {
+  try {
+    // Create new instance to ensure we use the potentially newly selected API key
+    const upscalingAi = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    const parts: any[] = [];
+
+    // Extract mime type and base64 data
+    const matches = imageBase64.match(/^data:(image\/[a-z]+);base64,(.+)$/i);
+    if (matches && matches.length === 3) {
+      parts.push({
+        inlineData: {
+          mimeType: matches[1],
+          data: matches[2]
+        }
+      });
+    } else {
+      throw new Error("Invalid base64 image format");
+    }
+
+    parts.push({ 
+      text: `Generate a high-resolution, 2K version of this image. Preserve the composition, main subject, and text exactly. Greatly enhance textures, lighting, and details. 
+      
+      Original Prompt Context: ${originalPrompt}` 
+    });
+
+    const response = await upscalingAi.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: {
+        parts: parts
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: aspectRatio,
+          imageSize: '2K' // Request 2K Resolution
+        }
+      }
+    });
+
+    if (response.candidates && response.candidates[0].content.parts) {
+       for (const part of response.candidates[0].content.parts) {
+         if (part.inlineData && part.inlineData.data) {
+           return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+         }
+       }
+    }
+
+    throw new Error("No upscaled image data found.");
+  } catch (error) {
+    console.error("Upscaling Error:", error);
+    throw new Error("Failed to upscale image.");
   }
 };
 

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { generateThumbnailPlan, generateThumbnailImage, generateVoiceover, refinePrompt } from './services/geminiService';
+import { generateThumbnailPlan, generateThumbnailImage, generateVoiceover, refinePrompt, upscaleImage } from './services/geminiService';
 import { ArtStyle, Emotion, GenerationState, AspectRatio, VoiceName, VoiceTone, LibraryItem } from './types';
 import { PlanDisplay } from './components/PlanDisplay';
-import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code, Database, Trash2, Clock, Copy, Upload, X, Camera, Maximize2 } from 'lucide-react';
+import { Terminal, Video, Settings, Image as ImageIcon, AlertTriangle, Smartphone, Monitor, Mic, Play, Download, Wifi, Battery, Code, Database, Trash2, Clock, Copy, Upload, X, Camera, Maximize2, Zap, Cpu } from 'lucide-react';
 
 const App: React.FC = () => {
   // Config State
@@ -24,6 +24,8 @@ const App: React.FC = () => {
     isGeneratingHumanImage: false,
     isGeneratingObjectImage: false,
     isGeneratingVoice: false,
+    isUpscalingHuman: false,
+    isUpscalingObject: false,
     strategy: null,
     generatedImages: { human: null, object: null },
     voiceUrl: null,
@@ -46,20 +48,23 @@ const App: React.FC = () => {
   }, []);
 
   const addToLibrary = (item: LibraryItem) => {
-    try {
-      const updatedLibrary = [item, ...library].slice(0, 10); // Keep max 10 items to save space
-      setLibrary(updatedLibrary);
-      localStorage.setItem('thumbnail_library', JSON.stringify(updatedLibrary));
-    } catch (e) {
-      console.error("Storage limit reached", e);
-      setState(prev => ({...prev, error: "STORAGE_WARNING: Local database full. Oldest items overwritten."}));
-    }
+    setLibrary(prev => {
+        const updated = [item, ...prev].slice(0, 10);
+        try {
+            localStorage.setItem('thumbnail_library', JSON.stringify(updated));
+        } catch(e) {
+             console.error("Storage limit reached", e);
+        }
+        return updated;
+    });
   };
 
   const deleteFromLibrary = (id: string) => {
-    const updatedLibrary = library.filter(item => item.id !== id);
-    setLibrary(updatedLibrary);
-    localStorage.setItem('thumbnail_library', JSON.stringify(updatedLibrary));
+    setLibrary(prev => {
+        const updated = prev.filter(item => item.id !== id);
+        localStorage.setItem('thumbnail_library', JSON.stringify(updated));
+        return updated;
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,9 +83,11 @@ const App: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handlePlanGeneration = async () => {
+  // Combined Workflow: Plan -> Auto Generate Images
+  const handleFullProtocol = async () => {
     if (!script.trim()) return;
     
+    // 1. Start Planning
     setState(prev => ({ 
       ...prev, 
       isPlanning: true, 
@@ -90,22 +97,85 @@ const App: React.FC = () => {
     }));
 
     try {
+      // Generate Plan
       const strategy = await generateThumbnailPlan(script, selectedStyle, selectedEmotion, selectedAspectRatio);
-      setState(prev => ({ ...prev, isPlanning: false, strategy }));
+      
+      // Update state: Planning complete, start Image Generation
+      setState(prev => ({ 
+        ...prev, 
+        isPlanning: false, 
+        strategy,
+        isGeneratingHumanImage: true,
+        isGeneratingObjectImage: true 
+      }));
+
+      // 2. Trigger Parallel Image Generation
+
+      // Human Version
+      generateThumbnailImage(
+          strategy.human_version.image_prompt, 
+          selectedAspectRatio, 
+          referenceImage || undefined
+      ).then(imageUrl => {
+          setState(prev => ({ 
+            ...prev, 
+            isGeneratingHumanImage: false, 
+            generatedImages: { ...prev.generatedImages, human: imageUrl } 
+          }));
+          addToLibrary({
+            id: Date.now().toString() + "_h",
+            type: 'human',
+            imageUrl: imageUrl,
+            prompt: strategy.human_version.image_prompt,
+            timestamp: Date.now(),
+            aspectRatio: selectedAspectRatio
+          });
+      }).catch(err => {
+           console.error("Human Gen Failed", err);
+           setState(prev => ({ ...prev, isGeneratingHumanImage: false }));
+      });
+
+      // Object Version
+      const refImg = (!applyRefToHumanOnly && referenceImage) ? referenceImage : undefined;
+      generateThumbnailImage(
+          strategy.object_version.image_prompt, 
+          selectedAspectRatio,
+          refImg
+      ).then(imageUrl => {
+          setState(prev => ({ 
+            ...prev, 
+            isGeneratingObjectImage: false, 
+            generatedImages: { ...prev.generatedImages, object: imageUrl } 
+          }));
+          addToLibrary({
+            id: Date.now().toString() + "_o",
+            type: 'object',
+            imageUrl: imageUrl,
+            prompt: strategy.object_version.image_prompt,
+            timestamp: Date.now(),
+            aspectRatio: selectedAspectRatio
+          });
+      }).catch(err => {
+          console.error("Object Gen Failed", err);
+          setState(prev => ({ ...prev, isGeneratingObjectImage: false }));
+      });
+
     } catch (err) {
       setState(prev => ({ 
         ...prev, 
         isPlanning: false, 
-        error: "SYSTEM FAILURE: Could not decrypt script." 
+        isGeneratingHumanImage: false,
+        isGeneratingObjectImage: false,
+        error: "SYSTEM FAILURE: Could not execute protocol." 
       }));
     }
   };
 
+  // Individual Handlers (For Retry/Manual Button in Cards)
   const handleHumanImageGeneration = async () => {
     if (!state.strategy) return;
     setState(prev => ({ ...prev, isGeneratingHumanImage: true, error: null }));
     try {
-      // Pass reference image if available. Always apply for Human version if set.
       const imageUrl = await generateThumbnailImage(
           state.strategy.human_version.image_prompt, 
           selectedAspectRatio, 
@@ -118,7 +188,6 @@ const App: React.FC = () => {
         generatedImages: { ...prev.generatedImages, human: imageUrl } 
       }));
       
-      // Add to Library
       addToLibrary({
         id: Date.now().toString(),
         type: 'human',
@@ -137,9 +206,7 @@ const App: React.FC = () => {
     if (!state.strategy) return;
     setState(prev => ({ ...prev, isGeneratingObjectImage: true, error: null }));
     try {
-      // Conditionally pass reference image based on user setting
       const refImg = (!applyRefToHumanOnly && referenceImage) ? referenceImage : undefined;
-      
       const imageUrl = await generateThumbnailImage(
           state.strategy.object_version.image_prompt, 
           selectedAspectRatio,
@@ -152,7 +219,6 @@ const App: React.FC = () => {
         generatedImages: { ...prev.generatedImages, object: imageUrl } 
       }));
 
-      // Add to Library
       addToLibrary({
         id: Date.now().toString(),
         type: 'object',
@@ -164,6 +230,60 @@ const App: React.FC = () => {
 
     } catch (err) {
       setState(prev => ({ ...prev, isGeneratingObjectImage: false, error: "RENDER ERROR: Object visual failed." }));
+    }
+  };
+
+  const handleUpscale = async (type: 'human' | 'object') => {
+    const currentImage = type === 'human' ? state.generatedImages.human : state.generatedImages.object;
+    const currentPrompt = type === 'human' ? state.strategy?.human_version.image_prompt : state.strategy?.object_version.image_prompt;
+
+    if (!currentImage || !currentPrompt) return;
+
+    const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+    if (!hasKey) {
+        const success = await (window as any).aistudio.openSelectKey();
+        if (!success) {
+            setState(prev => ({ ...prev, error: "ACCESS DENIED: Payment Key Required for High-Res Protocol." }));
+            return;
+        }
+    }
+
+    setState(prev => ({ 
+        ...prev, 
+        isUpscalingHuman: type === 'human',
+        isUpscalingObject: type === 'object',
+        error: null 
+    }));
+
+    try {
+        const upscaledUrl = await upscaleImage(currentImage, currentPrompt, selectedAspectRatio);
+        
+        setState(prev => ({
+            ...prev,
+            isUpscalingHuman: false,
+            isUpscalingObject: false,
+            generatedImages: {
+                ...prev.generatedImages,
+                [type]: upscaledUrl
+            }
+        }));
+
+        addToLibrary({
+            id: Date.now().toString() + "_upscaled",
+            type: type,
+            imageUrl: upscaledUrl,
+            prompt: currentPrompt + " [UPSCALED 2K]",
+            timestamp: Date.now(),
+            aspectRatio: selectedAspectRatio
+        });
+
+    } catch (err) {
+        setState(prev => ({ 
+            ...prev, 
+            isUpscalingHuman: false, 
+            isUpscalingObject: false, 
+            error: "ENHANCEMENT FAILED: Processing limit or network error." 
+        }));
     }
   };
 
@@ -243,7 +363,7 @@ const App: React.FC = () => {
               <Terminal className="text-green-500 animate-pulse" size={20} />
             </div>
             <h1 className="text-xl font-bold tracking-widest text-green-500">
-              THUMBNAIL_ALCHEMIST <span className="text-xs align-top text-green-700">v2.5</span>
+              THUMBNAIL_ALCHEMIST <span className="text-xs align-top text-green-700">v3.0</span>
             </h1>
           </div>
           <div className="flex items-center gap-4 text-xs text-green-700 font-bold">
@@ -435,7 +555,7 @@ const App: React.FC = () => {
           </div>
 
           <button
-            onClick={handlePlanGeneration}
+            onClick={handleFullProtocol}
             disabled={!script || state.isPlanning}
             className={`w-full py-4 text-sm font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all
               ${!script 
@@ -445,7 +565,15 @@ const App: React.FC = () => {
                   : 'bg-green-600 text-black hover:bg-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]'
               }`}
           >
-            {state.isPlanning ? 'DECRYPTING...' : 'INITIATE_ALGORITHM'}
+            {state.isPlanning ? (
+              <>
+                 <span className="animate-spin">|</span> EXECUTING PROTOCOL...
+              </>
+            ) : (
+              <>
+                 <Cpu size={16} /> RENDER_VISUALS
+              </>
+            )}
           </button>
 
           {state.error && (
@@ -463,16 +591,16 @@ const App: React.FC = () => {
                 {/* Grid background */}
                 <div className="absolute inset-0 z-0 bg-[linear-gradient(rgba(0,50,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,50,0,0.1)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
             
-            {!state.strategy && (
+            {!state.strategy && !state.isPlanning && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
                 <div className="w-24 h-24 border border-green-900 rounded-full flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
                     <div className="w-16 h-16 border border-green-800 rounded-full border-t-green-500 animate-[spin_3s_linear_infinite]"></div>
                 </div>
-                <p className="text-green-800 font-bold tracking-widest text-sm typing-cursor">AWAITING_STRATEGY_PROTOCOL</p>
+                <p className="text-green-800 font-bold tracking-widest text-sm typing-cursor">AWAITING_RENDER_PROTOCOL</p>
                 </div>
             )}
 
-            {state.strategy && (
+            {(state.strategy || state.isPlanning) && (
                 <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
                 
                 {/* Human Version */}
@@ -486,29 +614,52 @@ const App: React.FC = () => {
                                     onClick={() => setPreviewImage(state.generatedImages.human)}
                                     className="w-full h-auto object-contain border border-green-800 cursor-zoom-in hover:opacity-90 transition-opacity hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]" 
                                 />
-                                <a 
-                                    href={state.generatedImages.human} 
-                                    download="human_thumb.png" 
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900 z-20"
-                                >
-                                    <Download size={16} />
-                                </a>
+                                <div className="absolute bottom-2 right-2 flex gap-2 z-20">
+                                     <button
+                                        onClick={(e) => { e.stopPropagation(); handleUpscale('human'); }}
+                                        disabled={state.isUpscalingHuman}
+                                        className="bg-black/80 text-green-400 p-2 border border-green-600 hover:bg-green-900/80 transition-all flex items-center gap-1 text-[10px] font-bold"
+                                        title="Upscale to 2K"
+                                    >
+                                        <Zap size={14} className={state.isUpscalingHuman ? "animate-pulse" : ""} />
+                                        {state.isUpscalingHuman ? "ENHANCING..." : "ENHANCE [2K]"}
+                                    </button>
+                                    <a 
+                                        href={state.generatedImages.human} 
+                                        download="human_thumb.png" 
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900"
+                                        title="Download"
+                                    >
+                                        <Download size={16} />
+                                    </a>
+                                </div>
                             </>
                         ) : (
                             <div className="text-green-900 flex flex-col items-center">
-                                <ImageIcon size={32} className="mb-2"/>
-                                <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                                {state.isGeneratingHumanImage ? (
+                                    <>
+                                        <span className="animate-spin mb-2">|</span>
+                                        <span className="text-[10px] tracking-widest animate-pulse">RENDERING...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <ImageIcon size={32} className="mb-2"/>
+                                        <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
-                    <PlanDisplay 
-                        title="01 // HUMAN_TARGET" 
-                        concept={state.strategy.human_version}
-                        onGenerateImage={handleHumanImageGeneration}
-                        isGeneratingImage={state.isGeneratingHumanImage}
-                        onRefinePrompt={(instruction) => handleRefinePrompt('human', instruction)}
-                    />
+                    {state.strategy && (
+                        <PlanDisplay 
+                            title="01 // HUMAN_TARGET" 
+                            concept={state.strategy.human_version}
+                            onGenerateImage={handleHumanImageGeneration}
+                            isGeneratingImage={state.isGeneratingHumanImage}
+                            onRefinePrompt={(instruction) => handleRefinePrompt('human', instruction)}
+                        />
+                    )}
                 </div>
 
                 {/* Object Version */}
@@ -522,29 +673,52 @@ const App: React.FC = () => {
                                     onClick={() => setPreviewImage(state.generatedImages.object)}
                                     className="w-full h-auto object-contain border border-green-800 cursor-zoom-in hover:opacity-90 transition-opacity hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]" 
                                 />
-                                <a 
-                                    href={state.generatedImages.object} 
-                                    download="object_thumb.png" 
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="absolute bottom-2 right-2 bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900 z-20"
-                                >
-                                    <Download size={16} />
-                                </a>
+                                <div className="absolute bottom-2 right-2 flex gap-2 z-20">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleUpscale('object'); }}
+                                        disabled={state.isUpscalingObject}
+                                        className="bg-black/80 text-green-400 p-2 border border-green-600 hover:bg-green-900/80 transition-all flex items-center gap-1 text-[10px] font-bold"
+                                        title="Upscale to 2K"
+                                    >
+                                        <Zap size={14} className={state.isUpscalingObject ? "animate-pulse" : ""} />
+                                        {state.isUpscalingObject ? "ENHANCING..." : "ENHANCE [2K]"}
+                                    </button>
+                                    <a 
+                                        href={state.generatedImages.object} 
+                                        download="object_thumb.png" 
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="bg-black/80 text-green-500 p-2 border border-green-500 hover:bg-green-900"
+                                        title="Download"
+                                    >
+                                        <Download size={16} />
+                                    </a>
+                                </div>
                             </>
                         ) : (
                             <div className="text-green-900 flex flex-col items-center">
-                                <ImageIcon size={32} className="mb-2"/>
-                                <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                                {state.isGeneratingObjectImage ? (
+                                    <>
+                                        <span className="animate-spin mb-2">|</span>
+                                        <span className="text-[10px] tracking-widest animate-pulse">RENDERING...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <ImageIcon size={32} className="mb-2"/>
+                                        <span className="text-[10px] tracking-widest">NO_IMAGE_DATA</span>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
-                    <PlanDisplay 
-                        title="02 // OBJECT_TARGET" 
-                        concept={state.strategy.object_version}
-                        onGenerateImage={handleObjectImageGeneration}
-                        isGeneratingImage={state.isGeneratingObjectImage}
-                        onRefinePrompt={(instruction) => handleRefinePrompt('object', instruction)}
-                    />
+                    {state.strategy && (
+                        <PlanDisplay 
+                            title="02 // OBJECT_TARGET" 
+                            concept={state.strategy.object_version}
+                            onGenerateImage={handleObjectImageGeneration}
+                            isGeneratingImage={state.isGeneratingObjectImage}
+                            onRefinePrompt={(instruction) => handleRefinePrompt('object', instruction)}
+                        />
+                    )}
                 </div>
 
                 </div>
@@ -570,56 +744,61 @@ const App: React.FC = () => {
                         {library.map((item) => (
                             <div 
                                 key={item.id} 
-                                className="group relative bg-green-900/5 border border-green-900/50 hover:border-green-500 transition-colors"
+                                className="group relative bg-green-900/5 border border-green-900/50 hover:border-green-500 transition-colors overflow-hidden"
                             >
                                 <div 
                                     className="aspect-square w-full overflow-hidden bg-black/50 relative cursor-zoom-in"
                                     onClick={() => setPreviewImage(item.imageUrl)}
                                 >
-                                    <img src={item.imageUrl} alt="Archived" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" />
+                                    <img 
+                                        src={item.imageUrl} 
+                                        alt="Archived" 
+                                        className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-all duration-500 ease-out group-hover:scale-110" 
+                                    />
                                     {/* Type badge */}
-                                    <div className="absolute top-1 left-1 bg-black/80 text-[8px] text-green-500 px-1 border border-green-900 pointer-events-none">
+                                    <div className="absolute top-1 left-1 bg-black/80 text-[8px] text-green-500 px-1 border border-green-900 pointer-events-none z-10">
                                         {item.type === 'human' ? 'HUM' : 'OBJ'}
                                     </div>
                                     
                                     {/* Overlay Actions */}
-                                    <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 pointer-events-none">
-                                        {/* To allow clicks on buttons but pass clicks on background to parent for preview, we need pointer-events-auto on buttons */}
-                                        <a 
-                                            href={item.imageUrl} 
-                                            download={`archive_${item.id}.png`} 
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="text-green-400 hover:text-white p-1 pointer-events-auto" 
-                                            title="Download"
-                                        >
-                                            <Download size={14} />
-                                        </a>
-                                        <button 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                navigator.clipboard.writeText(item.prompt);
-                                            }}
-                                            className="text-green-400 hover:text-white p-1 pointer-events-auto" 
-                                            title="Copy Prompt"
-                                        >
-                                            <Copy size={14} />
-                                        </button>
-                                        <button 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                deleteFromLibrary(item.id);
-                                            }}
-                                            className="text-red-500 hover:text-red-300 p-1 pointer-events-auto" 
-                                            title="Delete"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                         <div className="mt-1 text-[8px] text-green-600 font-bold uppercase tracking-widest pointer-events-none">
-                                            Click to Expand
+                                    <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-sm">
+                                        <div className="flex gap-2">
+                                            <a 
+                                                href={item.imageUrl} 
+                                                download={`archive_${item.id}.png`} 
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="bg-green-900/30 text-green-400 hover:bg-green-600 hover:text-black p-2 border border-green-700 rounded-sm transition-colors pointer-events-auto transform translate-y-4 group-hover:translate-y-0 duration-300 delay-75" 
+                                                title="Download"
+                                            >
+                                                <Download size={16} />
+                                            </a>
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    navigator.clipboard.writeText(item.prompt);
+                                                }}
+                                                className="bg-green-900/30 text-green-400 hover:bg-green-600 hover:text-black p-2 border border-green-700 rounded-sm transition-colors pointer-events-auto transform translate-y-4 group-hover:translate-y-0 duration-300 delay-100" 
+                                                title="Copy Prompt"
+                                            >
+                                                <Copy size={16} />
+                                            </button>
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    deleteFromLibrary(item.id);
+                                                }}
+                                                className="bg-red-900/20 text-red-500 hover:bg-red-600 hover:text-black p-2 border border-red-900 rounded-sm transition-colors pointer-events-auto transform translate-y-4 group-hover:translate-y-0 duration-300 delay-150" 
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                         <div className="text-[9px] text-green-500 font-bold uppercase tracking-widest translate-y-4 group-hover:translate-y-0 transition-transform duration-300 delay-200 pointer-events-none">
+                                            View Full Res
                                         </div>
                                     </div>
                                 </div>
-                                <div className="p-2 border-t border-green-900/50">
+                                <div className="p-2 border-t border-green-900/50 bg-black z-10 relative">
                                     <div className="flex items-center gap-1 text-[8px] text-green-700 mb-1">
                                         <Clock size={8} /> {formatDate(item.timestamp)}
                                     </div>

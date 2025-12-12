@@ -26,7 +26,12 @@ export enum Emotion {
   CURIOSITY = 'Deep Curiosity',
   ANGER = 'Conflict/Anger',
   JOY = 'Pure Joy',
-  FEAR = 'Eerie/Scary'
+  FEAR = 'Eerie/Scary',
+  SADNESS = 'Heartbreaking Sadness',
+  DISGUST = 'Extreme Disgust',
+  CONFUSION = 'Total Confusion',
+  TRIUMPH = 'Victory/Triumph',
+  DESPAIR = 'Hopeless Despair'
 }
 
 export type AspectRatio = '16:9' | '9:16';
@@ -52,6 +57,8 @@ export interface GenerationState {
   isGeneratingHumanImage: boolean;
   isGeneratingObjectImage: boolean;
   isGeneratingVoice: boolean;
+  isUpscalingHuman: boolean;
+  isUpscalingObject: boolean;
   strategy: ThumbnailStrategy | null;
   generatedImages: {
     human: string | null;
