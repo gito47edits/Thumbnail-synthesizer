@@ -1,4 +1,5 @@
 
+
 export interface ThumbnailConcept {
   rationale: string;
   image_prompt: string;
@@ -24,14 +25,14 @@ export enum ArtStyle {
 export enum Emotion {
   SHOCK = 'Shock/Surprise',
   CURIOSITY = 'Deep Curiosity',
-  ANGER = 'Conflict/Anger',
-  JOY = 'Pure Joy',
-  FEAR = 'Eerie/Scary',
-  SADNESS = 'Heartbreaking Sadness',
-  DISGUST = 'Extreme Disgust',
-  CONFUSION = 'Total Confusion',
-  TRIUMPH = 'Victory/Triumph',
-  DESPAIR = 'Hopeless Despair'
+  EXCITEMENT = 'Pure Excitement/Hype',
+  AWE = 'Mind-Blowing Awe',
+  CONFUSION = 'Confusion/WTF',
+  JOY = 'Uncontrollable Laughter',
+  SATISFACTION = 'Deep Satisfaction',
+  ANGER = 'Righteous Anger',
+  TRIUMPH = 'Epic Victory',
+  SECRETIVE = 'Secretive/Gossiping'
 }
 
 export type AspectRatio = '16:9' | '9:16';
@@ -46,10 +47,14 @@ export enum VoiceName {
 
 export enum VoiceTone {
   NORMAL = 'Normally',
-  EXCITED = 'Cheerfully and excitedly',
+  STORYTELLER = 'like a captivating storyteller',
+  HYPE = 'with high energy and hype',
   DRAMATIC = 'with a deep, dramatic movie trailer voice',
   MYSTERIOUS = 'in a mysterious, whispering tone',
-  URGENT = 'fast and urgently'
+  NEWS = 'like a professional news anchor',
+  SARCASTIC = 'with a sarcastic, witty tone',
+  SAD = 'with a sad, melancholic tone',
+  ASMR = 'in a soft, soothing ASMR whisper'
 }
 
 export interface GenerationState {
